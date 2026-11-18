@@ -225,3 +225,9 @@ tools/art/remaster/fxviewer/inbox-ra.jsonl
 /game/.grassmask_TEMPERAT.materialized.json
 /game/.grassmask-unpack-*
 /game/.grassmask-record-*
+
+# Game controller: the probe and the shim are built locally (input/gamepad_probe.c,
+# tools/mac/gamepad-shim/build.sh).
+input/gamepad_probe
+tools/mac/gamepad-shim/libopencnc3d-gamepad.dylib
+input/gamepad_preview
