@@ -65,6 +65,18 @@ CDEFS="-DGL_SILENCE_DEPRECATION"
 # the very file the panel lives in would be a cook that cooked nothing.
 [ -n "$OPENCNC3D_COOKED" ] && CDEFS="$CDEFS -DOPENCNC3D_COOKED=1"
 
+# THE GAME CONTROLLER (input/gamepad.c). Every translation unit of the program is compiled
+# with input/gamepad_hook.h forced in, which routes the five SDL calls a controller has to
+# see -- SDL_PollEvent, SDL_GetKeyboardState, SDL_GetMouseState, SDL_GetModState and
+# SDL_GL_SwapWindow -- through it, so every screen hears the pad without a line of its own.
+# gamepad.c and gamepad_draw.c are the two files compiled WITHOUT it: they are what the
+# hook calls, and they reach the real SDL.
+GPHOOK="-I../input -include ../input/gamepad_hook.h"
+cc $OPENCNC3D_ARCH -std=gnu99 -O2 -g -Wall -DGL_SILENCE_DEPRECATION -I../input $(sdl2-config --cflags) -c ../input/gamepad.c -o gamepad.o
+cc $OPENCNC3D_ARCH -std=gnu99 -O2 -g -Wall -DGL_SILENCE_DEPRECATION -I../input $(sdl2-config --cflags) -c ../input/gamepad_draw.c -o gamepad_draw.o
+# Home and Capture stay the game's, not the Games app's (see the file's header)
+cc $OPENCNC3D_ARCH -O2 -g -Wall -fobjc-arc -c ../input/gamepad_mac.m -o gamepad_mac.o
+
 # The C half: DOS rasteriser, menu, menu shell, movie decoder, and the audio engine.
 #
 # AUDIO_SRC is every file of audio/ except the harnesses and audio_null.c. It is plain
@@ -84,7 +96,7 @@ for f in ../game/dosbar.c ../game/hud640.c ../game/dosopt.c ../game/dossave.c ..
          ../video/vqaplay.c ../video/movieplay.c ../video/moviesnd.c \
          ../video/pngwrite.c campaign.c logo3d.c $AUDIO_SRC; do
     o=$(basename "$f" .c).o
-    cc $OPENCNC3D_ARCH -std=gnu89 -O2 -g -Wall $CDEFS $INC $(sdl2-config --cflags) -c "$f" -o "$o"
+    cc $OPENCNC3D_ARCH -std=gnu89 -O2 -g -Wall $CDEFS $INC $(sdl2-config --cflags) $GPHOOK -c "$f" -o "$o"
 done
 for f in $AUDIO_SRC; do AUDIO_OBJ="$AUDIO_OBJ $(basename "$f" .c).o"; done
 
@@ -107,15 +119,15 @@ cc $OPENCNC3D_ARCH -std=gnu89 -O2 -g -c ../net/netmatch.c -o netmatch.o
 # netbeacon.c is LAN discovery, which the multiplayer screen's server browser reads.
 cc $OPENCNC3D_ARCH -std=gnu89 -O2 -g -c ../net/netbeacon.c -o netbeacon.o
 
-clang++ $OPENCNC3D_ARCH -std=c++14 -O2 -g -DGL_SILENCE_DEPRECATION $CDEFS $INC $(sdl2-config --cflags) -c ../menu/enhanced_menu.cpp -o enhanced_menu.o
+clang++ $OPENCNC3D_ARCH -std=c++14 -O2 -g -DGL_SILENCE_DEPRECATION $CDEFS $INC $(sdl2-config --cflags) $GPHOOK -c ../menu/enhanced_menu.cpp -o enhanced_menu.o
 
 # The C++ half: the tactical renderer as a library, plus the state machine.
 clang++ $OPENCNC3D_ARCH -std=c++14 -O2 -g \
     -fms-extensions -fdeclspec -D__int64="long long" -DOPENCNC3D_NO_MAIN $CDEFS \
     -include "$BUILD_STAMP" -c ../game/cnc_eyes.cpp -o cnc_eyes.o \
-    -I"$HDR" $INC $(sdl2-config --cflags)
+    -I"$HDR" $INC $(sdl2-config --cflags) $GPHOOK
 
-clang++ $OPENCNC3D_ARCH -std=c++14 -O2 -g -include "$BUILD_STAMP" -c opencnc3d.cpp -o opencnc3d.o $CDEFS -I"$HDR" $INC $(sdl2-config --cflags)
+clang++ $OPENCNC3D_ARCH -std=c++14 -O2 -g -include "$BUILD_STAMP" -c opencnc3d.cpp -o opencnc3d.o $CDEFS -I"$HDR" $INC $(sdl2-config --cflags) $GPHOOK
 
 # -headerpad_max_install_names: reserve room in the Mach-O header so the dylib paths can
 # be rewritten afterwards without relinking. Today's rewrite happens to shrink the string
@@ -124,8 +136,8 @@ clang++ $OPENCNC3D_ARCH -std=c++14 -O2 -g -include "$BUILD_STAMP" -c opencnc3d.c
 # library or the prefix is renamed.
 clang++ $OPENCNC3D_ARCH -o opencnc3d opencnc3d.o cnc_eyes.o dosbar.o hud640.o dosopt.o dossave.o dosmenu.o dosops.o doslobby.o dosmp.o dosmenu_shell.o enhanced_menu.o \
     vqaplay.o movieplay.o moviesnd.o pngwrite.o campaign.o logo3d.o lockstep.o net_udp.o netmatch.o netbeacon.o roomcode.o \
-    mpbrowse.o lnet.o ljson.o $AUDIO_OBJ \
-    $(sdl2-config --libs) -Wl,-headerpad_max_install_names -framework OpenGL -lz -lcurl
+    mpbrowse.o lnet.o ljson.o gamepad.o gamepad_draw.o gamepad_mac.o $AUDIO_OBJ \
+    $(sdl2-config --libs) -Wl,-headerpad_max_install_names -framework OpenGL -framework GameController -framework Foundation -lz -lcurl
 
 # MAKE THE BINARY LOAD SDL FROM BESIDE ITSELF, not from the build machine's Homebrew.
 # The linker writes the absolute path it linked against (/usr/local/opt/sdl2-compat/...),
