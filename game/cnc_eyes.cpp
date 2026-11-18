@@ -24460,6 +24460,8 @@ static void opt_apply_settings(void* user, const DOPT_Settings* set)
         PUSH_SPEED = PUSH_SPEED_BASE * rate[i];
         KEY_SPEED  = 900.0f * rate[i];
     }
+    /* The controller's pointer speed (input/gamepad.c), steps 1..10 there. */
+    gp_set_cursor_speed(set->padspeed + 1);
 }
 
 /* ---------------------------------------------------------------------------------- *
@@ -24518,6 +24520,7 @@ static int opt_controls_save(const char* path)
             DOPT_MAX_SPEED - 1, DOPT_MAX_SCROLL - 1, DOPT_VOL_TOP);
     fprintf(f, "speed   %d\n", g_optState.set.speed);
     fprintf(f, "scroll  %d\n", g_optState.set.scrollrate);
+    fprintf(f, "pad     %d\n", g_optState.set.padspeed);
     fprintf(f, "music   %d\n", g_optState.set.music);
     fprintf(f, "sound   %d\n", g_optState.set.sound);
     fprintf(f, "speech  %d\n", g_optState.set.speech);
@@ -24549,6 +24552,7 @@ static int opt_controls_load(const char* path, DOPT_Settings* s)
         if (sscanf(line, "%63s %d", key, &val) != 2) continue;
         if      (!strcmp(key, "speed"))  s->speed      = opt_clampi(val, 0, DOPT_MAX_SPEED - 1);
         else if (!strcmp(key, "scroll")) s->scrollrate = opt_clampi(val, 0, DOPT_MAX_SCROLL - 1);
+        else if (!strcmp(key, "pad"))    s->padspeed   = opt_clampi(val, 0, DOPT_MAX_PAD - 1);
         else if (!strcmp(key, "music"))  s->music      = opt_clampi(val, 0, DOPT_VOL_TOP);
         else if (!strcmp(key, "sound"))  s->sound      = opt_clampi(val, 0, DOPT_VOL_TOP);
         else if (!strcmp(key, "ambience")) s->ambience = opt_clampi(val, 0, DOPT_VOL_TOP);
@@ -26600,6 +26604,7 @@ static void opt_show(const char* scenario)
         dopt_set_gameplay(&g_optState, &g);
     }
     dopt_bind_gameplay(&g_optState, opt_apply_gameplay);
+    dopt_bind_padlayout(&g_optState, [](void*) { gp_show_layout(); });
     /* The score list, rebuilt on every open so it reflects whatever the audio engine
        actually has, and seeded with the row that is sounding right now. */
     jb_build_list();
@@ -42942,6 +42947,7 @@ int game_visuals_open(SDL_Window* win, const char* dospack, const char* shot)
         dopt_set_gameplay(&g_optState, &g);
     }
     dopt_bind_gameplay(&g_optState, opt_apply_gameplay);
+    dopt_bind_padlayout(&g_optState, [](void*) { gp_show_layout(); });
     /* AND THE GAME AND SOUND SETTINGS, for the screen's Gameplay and Audio tabs: the block
        the pause menu's Game Controls carries. Seeded as the pause menu seeds it when no
        controls file has filled it yet (the defaults, the mixer's own music and sound, the

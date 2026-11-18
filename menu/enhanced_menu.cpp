@@ -39,7 +39,7 @@ struct Seat {
 /* PLATE: a faction emblem on its steel tile (Red Alert's details plates), never pressed. */
 enum {BUTTON, CHECK, RANGE, FIELD, ROW, COLOUR, PLATE};
 enum {OPT=1,MAIN,OPS,LOBBY,BROWSER,DATABASE,CHOICE,SIDE,DEBRIEF};
-enum {TAB=1,RESET,BACK,RANGESET,DROP,DROPCHOICE,MODE,DISP,OPSTOP,OPSFILTER,
+enum {PADLAYOUT=900,TAB=1,RESET,BACK,RANGESET,DROP,DROPCHOICE,MODE,DISP,OPSTOP,OPSFILTER,
  MAPROW,SEATDONE,SEND,MPSETUP,MPHANDLE,OPTROW,SKRANGE,OPTITEM,SKITEM,SKRANDOM,SKCOUNTRY,RARANGE,RACHECK,
  SETRANGE,GPCHECK,LANGDROP,LANGPICK,LANGGO,LANGCANCEL,LANGCLOSE};
 struct View {
@@ -174,7 +174,8 @@ void well(const char *title,int x,int y,int w,int h,bool overlay=false){
 void begin(int kind,const void *owner,const char *frame,const std::string &title){
  if(!load())return;
  if(v.kind!=kind||v.owner!=owner){v.held=v.drag=-1;v.drop=v.popupChoice=-1;v.page=-1;v.lastselected=-1;
-  if(kind==OPT)v.section=0;if(kind==LOBBY)v.sksection=0;
+  /* OPENCNC3D_SETTINGS_TAB opens Settings on that tab (0..6), for a screenshot of a tab other than Display */
+ if(kind==OPT){const char *t=SDL_getenv("OPENCNC3D_SETTINGS_TAB");v.section=t?std::max(0,std::min(6,atoi(t))):0;}if(kind==LOBBY)v.sksection=0;
   if(kind==OPS){v.opsfilter=-1;v.opstop=0;}}
  v.kind=kind;v.owner=owner;v.frame=frame;v.title=kind==MAIN||(kind==OPT&&option_title);
  /* Red Alert's small boxes (a confirmation, a notice) keep their own size at the title and
@@ -601,10 +602,13 @@ void visuals(DOPT_State *st){
   langbox();
  }else if(v.section==5){
   well("GAME",38,160,460,358-shrink);well("INPUT",518,160,460,358-shrink);
-  setrange(st,DOPT_ES_SPEED,"Game speed",56,v.compact?238:252,424,false);
-  text("Slower",56,v.compact?286:300,MUTED);text("Faster",414,v.compact?286:300,MUTED);
-  setrange(st,DOPT_ES_SCROLL,"Scroll rate",56,v.compact?362:390,424,false);
-  text("Slower",56,v.compact?410:438,MUTED);text("Faster",414,v.compact?410:438,MUTED);
+  /* Three sliders in the GAME well, the third the controller's pointer speed. The
+     compact title frame has no room for three "Slower / Faster" lines, so there they
+     go: the value printed at each slider's right says the same thing. */
+  setrange(st,DOPT_ES_SPEED,"Game speed",56,232,424,false);
+  setrange(st,DOPT_ES_SCROLL,"Scroll rate",56,v.compact?316:342,424,false);
+  setrange(st,DOPT_ES_PAD,"Controller speed",56,v.compact?400:452,424,false);
+  if(!v.compact)for(int r=0;r<3;r++){text("Slower",56,280+r*110,MUTED);text("Faster",414,280+r*110,MUTED);}
   for(int i=0;i<DOPT_G_TOGGLES;i++){Seat &q=add(EM_GAMEPLAY_SEAT-i,dopt_gp_label(i),536,210+i*52,424,36,CHECK);q.action=GPCHECK;q.arg=i;q.value=st->gp.on[i];q.active=false;}
   langrow(536,v.compact?400:430);
  }else{
@@ -616,6 +620,8 @@ void visuals(DOPT_State *st){
   setrange(st,DOPT_ES_AMBIENCE,"Ambience",536,v.compact?362:390,424,true);
  }
  if(v.section<4){Seat &q=add(-1,"More Settings",342,v.h-86,192);q.action=TAB;q.arg=4;}
+ /* the Gameplay tab's own way to the controller's button layout, where More Settings sits on the picture's tabs */
+ if(v.section==5&&!(v.langBox>=0&&langhooks)){Seat &q=add(-1,"Button layout",342,v.h-86,192);q.action=PADLAYOUT;}
  optreset();optback(st);opt(st,DOPT_A_OK,"OK",758,v.h-86,220);
  if(v.drop>=0){
   int owner=-1;for(int i=0;i<int(v.seats.size());i++)if(v.seats[i].action==DROP&&v.seats[i].arg==v.drop)owner=i;
@@ -642,7 +648,7 @@ extern "C" void em_options(DOPT_State *st){
  case DOPT_PAGE_RESTATE:frame="settings-frame";title="MISSION BRIEFING";break;
  case DOPT_PAGE_NOTICE:frame="confirm-frame";title=st->ncaption;break;
  case DOPT_PAGE_SOUND:title="AUDIO";break;case DOPT_PAGE_CHEATS:title="CHEATS";break;}
- begin(OPT,st,frame,title);if(oldpage==DOPT_PAGE_VISUALS)v.section=0;
+ begin(OPT,st,frame,title);if(oldpage==DOPT_PAGE_VISUALS){const char *t=SDL_getenv("OPENCNC3D_SETTINGS_TAB");v.section=t?std::max(0,std::min(6,atoi(t))):0;}
  if(v.page!=st->page){v.held=v.drag=-1;v.drop=v.popupChoice=-1;v.page=st->page;}
   if(st->page==DOPT_PAGE_OPTIONS){
   text("MISSION PAUSED",354,64,ACCENT,true);text("MISSION",36,110,MUTED);text("SETTINGS",362,110,MUTED);
@@ -654,9 +660,13 @@ extern "C" void em_options(DOPT_State *st){
  }else if(st->page==DOPT_PAGE_CONTROLS){
   /* (the volumes and the jukebox are the pause menu's Audio page) */
   well("GAMEPLAY",38,110,940,v.h-228);
-  optrange(st,DOPT_C_SPEED,"Game speed",56,v.compact?188:216,904,st->set.speed,6,false);optrange(st,DOPT_C_SCROLL,"Scroll rate",56,v.compact?310:354,904,st->set.scrollrate,6,false);
-  text("Slower",56,v.compact?236:264,MUTED);text("Faster",894,v.compact?236:264,MUTED);text("Slower",56,v.compact?358:402,MUTED);text("Faster",894,v.compact?358:402,MUTED);
-  optreset();optback(st);opt(st,DOPT_C_OK,"OK",758,v.h-86,220);
+  /* three rows: game speed, scroll rate and the controller's pointer speed */
+  {const int y0=v.compact?178:186,dy=v.compact?100:110;
+   optrange(st,DOPT_C_SPEED,"Game speed",56,y0,904,st->set.speed,6,false);
+   optrange(st,DOPT_C_SCROLL,"Scroll rate",56,y0+dy,904,st->set.scrollrate,6,false);
+   optrange(st,DOPT_C_PAD,"Controller speed",56,y0+2*dy,904,st->set.padspeed,DOPT_MAX_PAD-1,false);
+   for(int r=0;r<3;r++){text("Slower",56,y0+r*dy+48,MUTED);text("Faster",894,y0+r*dy+48,MUTED);}}
+  optreset();opt(st,DOPT_C_PADLAYOUT,"Button layout",342,v.h-86,192);optback(st);opt(st,DOPT_C_OK,"OK",758,v.h-86,220);
  }else if(st->page==DOPT_PAGE_GAMEPLAY){
   well("INPUT",38,110,460,v.h-228);well("FEEDBACK",518,110,460,v.h-228);
   for(int i=0;i<DOPT_G_TOGGLES;i++){Seat &q=opt(st,i,dopt_gp_label(i),i==2?536:56,i==1?266:202,424,36,CHECK);q.value=st->gp.on[i];q.active=false;}
@@ -735,12 +745,13 @@ extern "C" int em_opt_release(DOPT_State *st,int x,int y){
   if(saves_blocked(st,q.item)){st->selected=q.item;dopt_open_page_notice(st,"NOTICE",em_route_notice(EM_ROUTE_SAVES));return 0;}
   return dopt_enh_action(st,q.item);
  case TAB:v.section=q.arg;v.drop=-1;return 0;
+ case PADLAYOUT:dopt_enh_padlayout(st);return 0;
  case BACK:st->texdrop=-1;v.drop=-1;return em_opt_key(st,DOPT_KEY_ESC);
- case RESET:if(st->page==DOPT_PAGE_CONTROLS){DOPT_Settings d;dopt_settings_init(&d);st->set.speed=d.speed;st->set.scrollrate=d.scrollrate;if(st->bind.apply)st->bind.apply(st->bind.user,&st->set);}
+ case RESET:if(st->page==DOPT_PAGE_CONTROLS){DOPT_Settings d;dopt_settings_init(&d);st->set.speed=d.speed;st->set.scrollrate=d.scrollrate;st->set.padspeed=d.padspeed;if(st->bind.apply)st->bind.apply(st->bind.user,&st->set);}
   /* (the Gameplay and Audio tabs reset their own settings, never the picture's) */
   else if(st->page==DOPT_PAGE_ADVANCED&&v.section>=5){DOPT_State d=*st;dopt_settings_init(&d.set);
-   const int game[]={DOPT_ES_SPEED,DOPT_ES_SCROLL},sound[]={DOPT_ES_MUSIC,DOPT_ES_SOUND,DOPT_ES_VOICES,DOPT_ES_AMBIENCE};
-   const int *w=v.section==5?game:sound,n=v.section==5?2:4;for(int k=0;k<n;k++)dopt_enh_setting(st,w[k],dopt_enh_setting_value(&d,w[k]));}
+   const int game[]={DOPT_ES_SPEED,DOPT_ES_SCROLL,DOPT_ES_PAD},sound[]={DOPT_ES_MUSIC,DOPT_ES_SOUND,DOPT_ES_VOICES,DOPT_ES_AMBIENCE};
+   const int *w=v.section==5?game:sound,n=v.section==5?3:4;for(int k=0;k<n;k++)dopt_enh_setting(st,w[k],dopt_enh_setting_value(&d,w[k]));}
   else dopt_enh_action(st,DOPT_A_RESET);return 0;
  case MODE:dopt_enh_mode(st,q.arg);v.drop=-1;return 0;
  case DROP:v.drop=v.drop==q.arg?-1:q.arg;v.popupChoice=-1;st->texdrop=v.drop;st->restop=0;return 0;
