@@ -43522,6 +43522,158 @@ static void confine_apply(SDL_Window* win, bool wanted)
 /* One mission, played. Draws and swaps until the player leaves; never calls exit(),
    never touches the window or the context it was handed. The return value tells the
    shell whether to put the menu back (ESC) or close the program (window closed). */
+/* ================================================================================== *
+ *  THE CONTROLLER'S BUILD RING (input/gamepad.c, ZL held).
+ *
+ *  The ring is the sidebar laid around the screen centre. It reads g_sbState and acts
+ *  through the very functions a click on a cameo calls (sb_click's left and right arms,
+ *  cnc_sidebar.h), so it can start, queue, place, fire, hold and cancel exactly what the
+ *  sidebar can and nothing it cannot. Four categories, sorted the way the 1995 sidebar
+ *  splits its columns: structures on the left; infantry, vehicles and aircraft (with
+ *  the specials) on the right.
+ * ================================================================================== */
+
+static Uint32 g_gpMissionTicks = 0;    /* stamped by game_loop's event drain every frame */
+/* the frame's drawable size and its window-to-drawable scale, stamped with it, so the
+   pad's questions about a window point go through the same picker a click does */
+static int g_gpFbW = 0, g_gpFbH = 0;
+static float g_gpScaleX = 1.0f, g_gpScaleY = 1.0f;
+
+static int gpb_category(const SbEntry& e)
+{
+    switch (e.type) {
+    case BUILDING_TYPE: return GP_BUILD_STRUCTURES;
+    case INFANTRY_TYPE: return GP_BUILD_INFANTRY;
+    case UNIT_TYPE: case VESSEL_TYPE: return GP_BUILD_VEHICLES;
+    default: return GP_BUILD_AIR;      /* AIRCRAFT_TYPE and SPECIAL */
+    }
+}
+
+/* -> the index into g_sbState.entry of a category's index-th entry, or -1 */
+static int gpb_entry(int cat, int index)
+{
+    int n = 0;
+    for (size_t i = 0; i < g_sbState.entry.size(); i++)
+        if (gpb_category(g_sbState.entry[i]) == cat && n++ == index)
+            return (int)i;
+    return -1;
+}
+
+static int gpb_active(void)
+{
+    return SDL_GetTicks() - g_gpMissionTicks < 300 && g_sbReady && g_sbOn && g_sbState.valid
+        && !g_optOpen && !g_cxOpen && !g_chatEntry && !g_editOn;
+}
+
+static int gpb_count(int cat)
+{
+    int n = 0;
+    for (size_t i = 0; i < g_sbState.entry.size(); i++)
+        n += gpb_category(g_sbState.entry[i]) == cat;
+    return n;
+}
+
+static int gpb_item(int cat, int index, GpBuildItem* out)
+{
+    const int i = gpb_entry(cat, index);
+    if (i < 0) return 0;
+    const SbEntry& e = g_sbState.entry[(size_t)i];
+    const char* title = sb_title_for(e.name);
+    snprintf(out->label, sizeof out->label, "%s", title ? title : e.name);
+    const SbTex* t = sb_cameo(sb_art_name(e.name));
+    if (!t || !t->gl) t = sb_cameo_true(sb_art_name(e.name));
+    out->tex = t ? t->gl : 0;
+    out->u = (t && t->uw > 0 && t->w > 0) ? (float)t->uw / (float)t->w : 1.0f;
+    out->v = (t && t->uh > 0 && t->h > 0) ? (float)t->uh / (float)t->h : 1.0f;
+    out->progress = e.progress;
+    out->cost = e.cost;
+    out->queued = g_sbQueueOn ? sb_queued(e) : 0;
+    out->state = e.completed ? GP_BI_READY : e.onHold ? GP_BI_HOLD : e.constructing ? GP_BI_BUILDING
+               : e.busy ? GP_BI_BUSY : GP_BI_AVAILABLE;
+    return 1;
+}
+
+/* sb_click's LEFT arm, for one entry */
+static void gpb_activate(int cat, int index)
+{
+    const int i = gpb_entry(cat, index);
+    if (i < 0) return;
+    const SbEntry& e = g_sbState.entry[(size_t)i];
+    if (e.type == SPECIAL) {
+        if (sb_super_is(e)) sb_super_disarm("clicked again");
+        else if (e.completed) { sb_cancel_placement(); sb_super_arm(e); }
+    } else if (e.completed && e.type == BUILDING_TYPE) {
+        sb_start_placement(i);
+    } else if (!e.constructing) {
+        sb_start(i);
+    } else if (g_sbQueueOn && sb_queueable(e)) {
+        int& n = g_sbQueue[std::make_pair(e.btype, e.bid)];
+        if (n < SB_QUEUE_MAX) n++;
+    }
+    printf("GAMEPAD-BUILD|activate|%s\n", e.name);
+    fflush(stdout);
+}
+
+/* sb_click's RIGHT arm: leave placement, take one off the queue, hold, then cancel */
+static void gpb_cancel(int cat, int index)
+{
+    const int i = gpb_entry(cat, index);
+    if (i < 0) return;
+    const SbEntry& e = g_sbState.entry[(size_t)i];
+    if (e.type == SPECIAL) {
+        if (sb_super_is(e)) sb_super_disarm("pad cancel");
+    } else if (g_sbPlacing && i == g_sbPlaceIdx) {
+        sb_cancel_placement();
+    } else if (g_sbQueueOn && sb_queued(e) > 0) {
+        int& n = g_sbQueue[std::make_pair(e.btype, e.bid)];
+        if (--n <= 0) {
+            g_sbQueue.erase(std::make_pair(e.btype, e.bid));
+            g_sbQueueOpen.erase(std::make_pair(e.btype, e.bid));
+        }
+    } else if (e.constructing) {
+        sb_hold(i);
+    } else if (e.onHold || e.completed) {
+        sb_cancel(i);
+    }
+    printf("GAMEPAD-BUILD|cancel|%s\n", e.name);
+    fflush(stdout);
+}
+
+static int gpb_credits(void) { return g_sbState.credits; }
+
+/* How many of the player's own objects carry this control group, read off the same
+   per-object `group` field the drawn group numbers come from (-1 when in none). */
+static int gpb_group_size(int slot)
+{
+    if (!BrainCtrlGroup || !g_playerHouse[0]) return -1;
+    int n = 0;
+    for (size_t i = 0; i < g_objects.size(); i++) {
+        const SimObject& o = g_objects[i];
+        if (o.id >= 0 && o.group == slot && !strcmp(o.house, g_playerHouse)) n++;
+    }
+    return n;
+}
+
+/* THE MAGNETIC CURSOR's question: is there something under this window point? pick_at
+   is the picker ui_left_click selects with, so "slows over it" and "a click here takes
+   it" are the same answer. Over the sidebar or off the map it answers no. */
+static int gpb_cursor_over(int x, int y)
+{
+    if (!gpb_active() || g_gpFbW <= 0 || g_gpFbH <= 0) return 0;
+    const float col = (float)x * g_gpScaleX, row = (float)y * g_gpScaleY;
+    if (sb_over_panel(col, row, g_gpFbW, g_gpFbH)) return 0;
+    return pick_at(col, row, g_gpFbW, g_gpFbH).index >= 0;
+}
+
+static const GpBuildHooks g_gpBuildHooks = {
+    gpb_active, gpb_count, gpb_item, gpb_activate, gpb_cancel, gpb_credits, gpb_group_size,
+    gpb_cursor_over
+};
+/* Handed over at load time: the hooks answer "not now" until a mission is being drawn. */
+static struct GpBuildRegister {
+    GpBuildRegister() { gp_set_build_hooks(&g_gpBuildHooks); }
+} g_gpBuildRegister;
+
 int game_loop(SDL_Window* win, const GameOpts* o)
 {
     /* THE SIZE THE WINDOW WAS ASKED FOR, and it is deliberately named so it cannot be
@@ -44464,6 +44616,8 @@ int game_loop(SDL_Window* win, const GameOpts* o)
         }
 
         SDL_Event e;
+        g_gpMissionTicks = SDL_GetTicks();   /* the build ring: a mission is on screen */
+        g_gpFbW = dw; g_gpFbH = dh; g_gpScaleX = mscaleX; g_gpScaleY = mscaleY;
         while (SDL_PollEvent(&e)) {
             /* THE DATABASE PAGE IS MODAL, and the capture is here rather than woven into
                the branches below because "modal" has to mean every key, not the ones
