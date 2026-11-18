@@ -162,6 +162,14 @@ extern "C" {
     (DOPT_GC_SPEED_Y + DOPT_GC_SPEED_H + DOPT_GC_TXT6_H + (DOPT_GC_MARGIN1 * 2)          \
      + DOPT_GC_TXT6_H)
 
+/* OURS: the controller speed slider, one more row of the same rhythm, in the band the
+   volume rows left when they moved to the Audio page. Its "Slower"/"Faster" line ends
+   at row 145, clear of Options Menu at DOPT_GC_OK_Y (156). */
+#define DOPT_GC_PAD_W DOPT_GC_SCROLL_W
+#define DOPT_GC_PAD_H DOPT_GC_SCROLL_H
+#define DOPT_GC_PAD_X DOPT_GC_SCROLL_X
+#define DOPT_GC_PAD_Y (DOPT_GC_SCROLL_Y + (DOPT_GC_SCROLL_Y - DOPT_GC_SPEED_Y))
+
 /* gamedlg.cpp:82-90, the Visual Controls and Sound Controls buttons.
  *
  * THE ONE PLACEMENT DECISION IN THIS FILE, and it is declared rather than hidden.
@@ -436,6 +444,10 @@ typedef enum
 {
     DOPT_C_SPEED = 0, /* TXT_SPEED       conquer.h:94  "GAME SPEED:"   */
     DOPT_C_SCROLL,    /* TXT_SCROLLRATE  conquer.h:95  "SCROLL RATE:"  */
+    /* OURS: how fast a game controller's stick moves the pointer (input/gamepad.c).
+       Third among the sliders because it is one: every index below DOPT_C_SOUNDCTRL is
+       a slider, and the dead volume items after it keep their own block. */
+    DOPT_C_PAD,
     DOPT_C_MUSIC,     /* TXT_MUSIC_VOLUME conquer.h:204 "Music volume:" */
     DOPT_C_SOUND,     /* TXT_SOUND_VOLUME conquer.h:205 "Sound volume:" */
     DOPT_C_SPEECH,    /* ours: the 1995 engine had no separate speech bus */
@@ -454,6 +466,9 @@ typedef enum
        Declared rather than hidden; the geometry and its derivation are at
        DOPT_GC_ROW_BTN_W above, and a known gap covers the deviation. */
     DOPT_C_SOUNDCTRL,
+    /* OURS: opens the controller's button layout picture. On the bottom row beside
+       Options Menu, as a centred pair, in the place Sound Controls had. */
+    DOPT_C_PADLAYOUT,
     DOPT_C_OK,        /* TXT_OPTIONS_MENU conquer.h:199 "Options Menu"  */
     DOPT_C_COUNT
 } DOPT_Ctrl;
@@ -1193,6 +1208,11 @@ typedef struct
 
 #define DOPT_MAX_SPEED 7   /* OptionsClass::MAX_SPEED_SETTING     options.h:44 */
 #define DOPT_MAX_SCROLL 7  /* OptionsClass::MAX_SCROLL_SETTING    options.h:43 */
+/* OURS: the controller's pointer speed, ten steps. Index 4 is "Normal", which is how the
+   Enhanced slider already names the fifth step of a range, and it is the pad's own
+   default of about one window width a second at full tilt. */
+#define DOPT_MAX_PAD 10
+#define DOPT_DEFAULT_PAD 4
 #define DOPT_VOL_MAX 255   /* sounddlg.cpp:231                                 */
 #define DOPT_VOL_THUMB 16  /* sounddlg.cpp:232                                 */
 #define DOPT_VOL_TOP (DOPT_VOL_MAX - DOPT_VOL_THUMB) /* the real top of travel */
@@ -1214,6 +1234,7 @@ typedef struct
     int sound;      /* 0 .. DOPT_VOL_TOP                          */
     int speech;     /* 0 .. DOPT_VOL_TOP                          */
     int ambience;   /* independent Enhanced environment volume */
+    int padspeed;   /* 0 .. DOPT_MAX_PAD-1, the controller's pointer speed */
 } DOPT_Settings;
 
 /* THE MIXER / RENDERER BINDING.
@@ -1248,6 +1269,9 @@ typedef struct
        its "(GDI) description" row, and returns how many. NULL means no save system,
        and the three buttons are then drawn disabled. */
     int (*slots)(void *user, DOPT_SlotRow *out, int max);
+    /* OURS: Game Controls' Button Layout button, the game controller's picture of what
+       every button does (input/gamepad.c). NULL means the button does nothing. */
+    void (*padlayout)(void *user);
 } DOPT_Bind;
 
 /* ------------------------------------------------------------------------ */
@@ -1420,6 +1444,9 @@ void dopt_gameplay_defaults(DOPT_Gameplay *g);
 void dopt_set_gameplay(DOPT_State *st, const DOPT_Gameplay *g);
 const DOPT_Gameplay *dopt_gameplay(const DOPT_State *st);
 void dopt_bind_gameplay(DOPT_State *st, void (*applygp)(void *, const DOPT_Gameplay *));
+void dopt_bind_padlayout(DOPT_State *st, void (*padlayout)(void *));
+/* The Settings screen's own Button Layout button (menu/enhanced_menu.cpp). */
+void dopt_enh_padlayout(DOPT_State *st);
 const char *dopt_gp_label(int item);
 /* The one heading on that page, measured HERE so the draw and any dump of it cannot
    disagree about where it lands. 0 when there is no font to measure with. */
@@ -1575,7 +1602,7 @@ int dopt_enh_action(DOPT_State *st, int item);
 void dopt_enh_control(DOPT_State *st, int item, int value);
 /* The Settings screen's Gameplay and Audio tabs: one setting each, by which. */
 enum { DOPT_ES_SPEED = 0, DOPT_ES_SCROLL, DOPT_ES_MUSIC, DOPT_ES_SOUND, DOPT_ES_VOICES,
-       DOPT_ES_AMBIENCE, DOPT_ES_COUNT };
+       DOPT_ES_AMBIENCE, DOPT_ES_PAD, DOPT_ES_COUNT };
 int  dopt_enh_setting_max(int which);
 /* "Normal", "Fast" ...: a game speed setting's name */
 const char *dopt_speed_name(int speed);

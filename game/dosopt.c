@@ -204,8 +204,9 @@ const char *dopt_vis_elem_label(int elem)
 }
 
 static const char *const dopt_ctrl_label[DOPT_C_COUNT] = {
-    "Game Speed:", "Scroll Rate:", "Music Volume:", "Sound Volume:", "Voices Volume:",
+    "Game Speed:", "Scroll Rate:", "Controller Speed:", "Music Volume:", "Sound Volume:", "Voices Volume:",
     "Sound Controls", /* TXT_SOUND_CONTROLS conquer.h:198 */
+    "Button Layout",  /* ours: the game controller's picture */
     "Options Menu"
 };
 
@@ -416,6 +417,7 @@ void dopt_settings_init(DOPT_Settings *s)
      * the bar (DOPT_VOL_TOP, 239). The engine stores a volume as fixed point 0..255. */
     s->speed = DOPT_DEFAULT_SPEED;
     s->scrollrate = 3;
+    s->padspeed = DOPT_DEFAULT_PAD;
     s->music = DOPT_VOL_TOP;
     s->sound = DOPT_VOL_TOP;
     s->speech = DOPT_VOL_TOP;
@@ -1343,17 +1345,28 @@ int dopt_item_rect(const DOPT_State *st, int item, int *x, int *y, int *w, int *
             *x = DOPT_GC_SCROLL_X; *y = DOPT_GC_SCROLL_Y;
             *w = DOPT_GC_SCROLL_W; *h = DOPT_GC_SCROLL_H;
             return 1;
+        case DOPT_C_PAD:
+            *x = DOPT_GC_PAD_X; *y = DOPT_GC_PAD_Y;
+            *w = DOPT_GC_PAD_W; *h = DOPT_GC_PAD_H;
+            return 1;
         case DOPT_C_MUSIC:
         case DOPT_C_SOUND:
         case DOPT_C_SPEECH:
         case DOPT_C_SOUNDCTRL:
             return 0;                      /* on the pause menu's Audio page now */
-        default:
-            /* DOPT_C_OK, alone on the bottom row and centred in the dialog, as
-               gamedlg.cpp:151 placed it, now that Sound Controls is not beside it */
+        case DOPT_C_PADLAYOUT:
+            /* the left of the bottom row's centred pair (DOPT_GC_ROW_X), the place
+               Sound Controls had beside Options Menu */
             *w = DOPT_GC_ROW_BTN_W;
             *h = DOPT_GC_OK_H;
-            *x = DOPT_GC_X + (DOPT_GC_W - DOPT_GC_ROW_BTN_W) / 2;
+            *x = DOPT_GC_ROW_X;
+            *y = DOPT_GC_OK_Y;
+            return 1;
+        default:
+            /* DOPT_C_OK, the right of the pair */
+            *w = DOPT_GC_ROW_BTN_W;
+            *h = DOPT_GC_OK_H;
+            *x = DOPT_GC_ROW_X + DOPT_GC_ROW_BTN_W + DOPT_GC_ROW_GAP;
             *y = DOPT_GC_OK_Y;
             return 1;
         }
@@ -1677,6 +1690,7 @@ static int dopt_ctrl_max(const DOPT_State *st, int ctrl)
     switch (ctrl) {
     case DOPT_C_SPEED:  return DOPT_MAX_SPEED - 1;
     case DOPT_C_SCROLL: return DOPT_MAX_SCROLL - 1;
+    case DOPT_C_PAD:    return DOPT_MAX_PAD - 1;
     default:            return DOPT_VOL_TOP;
     }
 }
@@ -1697,6 +1711,7 @@ static int *dopt_ctrl_slot(DOPT_State *st, int ctrl)
     switch (ctrl) {
     case DOPT_C_SPEED:  return &st->set.speed;
     case DOPT_C_SCROLL: return &st->set.scrollrate;
+    case DOPT_C_PAD:    return &st->set.padspeed;
     case DOPT_C_MUSIC:  return &st->set.music;
     case DOPT_C_SOUND:  return &st->set.sound;
     case DOPT_C_SPEECH: return &st->set.speech;
@@ -2221,6 +2236,12 @@ static int dopt_activate(DOPT_State *st, int item)
             st->pressed = -1;
             return DOPT_ACT_NONE;
         }
+        if (item == DOPT_C_PADLAYOUT) {
+            if (st->bind.padlayout)
+                st->bind.padlayout(st->bind.user);
+            st->pressed = -1;
+            return DOPT_ACT_NONE;
+        }
         if (item == DOPT_C_OK) {
             /* gamedlg.cpp: OK closes Game Controls and returns to the pause dialog. */
             st->page = DOPT_PAGE_OPTIONS;
@@ -2589,7 +2610,7 @@ static void dopt_draw_slider_label(DB_Surface *s, const DB_Font *f, const DOPT_S
     db_font_palette_grad(fp, (st->selected == ctrl) ? DOPT_TEXT_BRIGHT : DOPT_TEXT_MEDIUM,
                          DB_TBLACK);
 
-    if (ctrl == DOPT_C_SPEED || ctrl == DOPT_C_SCROLL) {
+    if (ctrl == DOPT_C_SPEED || ctrl == DOPT_C_SCROLL || ctrl == DOPT_C_PAD) {
         db_print(s, f, label, x, y - DOPT_GC_TXT6_H, fp, DB_FONT6_XSPACING);
         db_font_palette_grad(fp, DOPT_TEXT_MEDIUM, DB_TBLACK);
         db_print(s, f, "Slower", x, y + h + 1, fp, DB_FONT6_XSPACING);
@@ -3295,6 +3316,18 @@ void dopt_set_gameplay(DOPT_State *st, const DOPT_Gameplay *g)
 
 const DOPT_Gameplay *dopt_gameplay(const DOPT_State *st) { return st ? &st->gp : 0; }
 
+void dopt_bind_padlayout(DOPT_State *st, void (*padlayout)(void *))
+{
+    if (st)
+        st->bind.padlayout = padlayout;
+}
+
+void dopt_enh_padlayout(DOPT_State *st)
+{
+    if (st && st->bind.padlayout)
+        st->bind.padlayout(st->bind.user);
+}
+
 void dopt_bind_gameplay(DOPT_State *st, void (*applygp)(void *, const DOPT_Gameplay *))
 {
     if (!st) return;
@@ -3715,6 +3748,9 @@ void dopt_draw(DB_Surface *s, const DB_Pack *p, const DOPT_State *st)
         dopt_draw_slider(s, st, DOPT_C_SPEED, st->set.speed);
         dopt_draw_slider_label(s, f, st, DOPT_C_SCROLL);
         dopt_draw_slider(s, st, DOPT_C_SCROLL, st->set.scrollrate);
+        dopt_draw_slider_label(s, f, st, DOPT_C_PAD);
+        dopt_draw_slider(s, st, DOPT_C_PAD, st->set.padspeed);
+        dopt_draw_button(s, f, st, DOPT_C_PADLAYOUT, dopt_ctrl_label[DOPT_C_PADLAYOUT]);
         dopt_draw_button(s, f, st, DOPT_C_OK, dopt_ctrl_label[DOPT_C_OK]);
         return;
     }
@@ -3791,6 +3827,7 @@ static int *dopt_enh_setting_slot(DOPT_State *st, int which)
     case DOPT_ES_SOUND:    return &st->set.sound;
     case DOPT_ES_VOICES:   return &st->set.speech;
     case DOPT_ES_AMBIENCE: return &st->set.ambience;
+    case DOPT_ES_PAD:      return &st->set.padspeed;
     default:               return 0;
     }
 }
@@ -3798,6 +3835,7 @@ int dopt_enh_setting_max(int which)
 {
     if (which == DOPT_ES_SPEED) return DOPT_MAX_SPEED - 1;
     if (which == DOPT_ES_SCROLL) return DOPT_MAX_SCROLL - 1;
+    if (which == DOPT_ES_PAD) return DOPT_MAX_PAD - 1;
     return DOPT_VOL_TOP;
 }
 int dopt_enh_setting_value(DOPT_State *st, int which)
